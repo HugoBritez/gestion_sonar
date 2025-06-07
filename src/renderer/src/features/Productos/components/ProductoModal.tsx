@@ -23,7 +23,10 @@ import {
   CardContent,
 } from '@mui/joy';
 import { Database } from '../../../shared/types/database';
-import { useCreateProducto, useUpdateProducto } from '@renderer/services/useProductos';
+import { useCreateProducto, useUpdateProducto, productosKeys, useUploadImage, useDeleteImage } from '@renderer/services/useProductos';
+import { useQueryClient } from '@tanstack/react-query';
+import { Upload, X } from 'lucide-react';
+
 
 type ProductoRow = Database['public']['Tables']['productos']['Row'];
 type ProductoInsert = Database['public']['Tables']['productos']['Insert'];
@@ -72,6 +75,9 @@ export default function ProductoModal({
   error = null,
 }: ProductoModalProps): React.JSX.Element {
   const isEditing = Boolean(producto);
+  const queryClient = useQueryClient();
+  const uploadImageMutation = useUploadImage();
+  const deleteImageMutation = useDeleteImage();
   
   // Estado del formulario
   const [formData, setFormData] = React.useState<FormData>({
@@ -84,6 +90,10 @@ export default function ProductoModal({
     categoria_id: '',
     imagen: '',
   });
+
+  const [selectedImage, setSelectedImage] = React.useState<File | null>(null);
+  const [isUploading, setIsUploading] = React.useState(false);
+  const [alert, setAlert] = React.useState<{ type: 'success' | 'danger'; message: string } | null>(null);
 
   const [formErrors, setFormErrors] = React.useState<FormErrors>({});
   const [isSubmitting, setIsSubmitting] = React.useState(false);
@@ -119,6 +129,7 @@ export default function ProductoModal({
         });
       }
       setFormErrors({});
+      setSelectedImage(null);
     }
   }, [open, producto, isEditing]);
 
@@ -179,6 +190,64 @@ export default function ProductoModal({
     }
   };
 
+  // Manejar selección de imagen
+  const handleImageSelect = async (event: React.ChangeEvent<HTMLInputElement>): Promise<void> => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    // Validar tipo de archivo
+    if (!file.type.startsWith('image/')) {
+      setAlert({ type: 'danger', message: 'Por favor selecciona un archivo de imagen válido' });
+      return;
+    }
+
+    // Validar tamaño (máximo 5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      setAlert({ type: 'danger', message: 'La imagen no debe superar los 5MB' });
+      return;
+    }
+
+    setSelectedImage(file);
+  };
+
+  // Manejar eliminación de imagen
+  const handleRemoveImage = async (): Promise<void> => {
+    if (!formData.imagen) {
+      setSelectedImage(null);
+      setFormData(prev => ({ ...prev, imagen: '' }));
+      return;
+    }
+
+    try {
+      const fileName = formData.imagen.split('/').pop();
+      if (fileName) {
+        await deleteImageMutation.mutateAsync(fileName);
+      }
+    } catch (error) {
+      console.error('Error al eliminar la imagen:', error);
+      setAlert({ type: 'danger', message: 'Error al eliminar la imagen. Por favor, intenta nuevamente.' });
+      return;
+    }
+
+    setSelectedImage(null);
+    setFormData(prev => ({ ...prev, imagen: '' }));
+  };
+
+  // Efecto para limpiar la alerta después de 3 segundos
+  React.useEffect(() => {
+    let timer: NodeJS.Timeout;
+    if (alert) {
+      timer = setTimeout(() => {
+        setAlert(null);
+      }, 3000);
+    }
+    return () => {
+      if (timer) {
+        clearTimeout(timer);
+      }
+    };
+  }, [alert]);
+
   // Manejar envío del formulario
   const handleSubmit = async (event: React.FormEvent): Promise<void> => {
     event.preventDefault();
@@ -188,9 +257,23 @@ export default function ProductoModal({
     }
 
     setIsSubmitting(true);
+    setIsUploading(true);
 
     try {
-      const productoData: ProductoInsert | ProductoUpdate = {
+      let imagenUrl = formData.imagen;
+
+      // Si hay una nueva imagen seleccionada, subirla
+      if (selectedImage) {
+        try {
+          imagenUrl = await uploadImageMutation.mutateAsync(selectedImage);
+        } catch (error) {
+          console.error('Error al subir la imagen:', error);
+          setAlert({ type: 'danger', message: 'Error al subir la imagen. Por favor, intenta nuevamente.' });
+          return;
+        }
+      }
+
+      const baseProductoData = {
         nombre: formData.nombre.trim(),
         descripcion: formData.descripcion.trim() || null,
         precio: Number(formData.precio),
@@ -198,37 +281,66 @@ export default function ProductoModal({
         stock: formData.stock,
         categoria: formData.categoria || null,
         categoria_id: Number(formData.categoria_id),
-        imagen: formData.imagen.trim() || null,
-        estado: 1, // Asumiendo que 1 es activo
+        imagen: imagenUrl || null,
+        estado: 1,
       };
 
-      // Si estamos editando, agregar el ID
       if (isEditing && producto) {
-        (productoData as ProductoUpdate).id = producto.id;
-        await updateProductoMutation.mutateAsync({
-        id: producto?.id,
-        producto: productoData
-      })
+        // Modo edición
+        const productoUpdate: ProductoUpdate = {
+          ...baseProductoData,
+          id: producto.id
+        };
+        
+        try {
+          const updatedProduct = await updateProductoMutation.mutateAsync({
+            id: producto.id,
+            producto: productoUpdate
+          });
+
+          // Invalidar y refrescar datos
+          await queryClient.invalidateQueries({ queryKey: productosKeys.all });
+          await queryClient.refetchQueries({ queryKey: productosKeys.lists() });
+
+          onSubmit(updatedProduct);
+          onClose();
+        } catch (error) {
+          console.error('Error al actualizar producto:', error);
+          setAlert({ type: 'danger', message: 'Error al actualizar el producto. Por favor, intenta nuevamente.' });
+        }
+      } else {
+        // Modo creación
+        try {
+          const productoInsert: ProductoInsert = baseProductoData;
+          const newProduct = await createProductoMutation.mutateAsync(productoInsert);
+          
+          // Invalidar y refrescar datos
+          await queryClient.invalidateQueries({ queryKey: productosKeys.all });
+          await queryClient.refetchQueries({ queryKey: productosKeys.lists() });
+
+          onSubmit(newProduct);
+          onClose();
+        } catch (error) {
+          console.error('Error al crear producto:', error);
+          setAlert({ type: 'danger', message: 'Error al crear el producto. Por favor, intenta nuevamente.' });
+        }
       }
-
-      if(producto)
-      {
-        await createProductoMutation.mutateAsync(producto)
-      }
-
-
-      await onSubmit(productoData);
-      
-      onClose();
     } catch (err) {
-      console.error('Error al guardar producto:', err);
+      console.error('Error en handleSubmit:', err);
+      setAlert({ type: 'danger', message: err instanceof Error ? err.message : 'Error al procesar la operación' });
     } finally {
       setIsSubmitting(false);
+      setIsUploading(false);
     }
   };
 
+  // Manejar cierre del modal
   const handleClose = (): void => {
     if (isSubmitting) return; // Prevenir cierre durante envío
+    
+    // Limpiar estados
+    setSelectedImage(null);
+    setFormErrors({});
     onClose();
   };
 
@@ -257,6 +369,12 @@ export default function ProductoModal({
         {error && (
           <Alert color="danger" sx={{ mb: 2 }}>
             {error}
+          </Alert>
+        )}
+
+        {alert && (
+          <Alert color={alert.type} variant="soft" sx={{ mb: 2 }}>
+            {alert.message}
           </Alert>
         )}
 
@@ -296,13 +414,38 @@ export default function ProductoModal({
                   </FormControl>
 
                   <FormControl>
-                    <FormLabel>URL de Imagen</FormLabel>
-                    <Input
-                      value={formData.imagen}
-                      onChange={(e) => handleInputChange('imagen', e.target.value)}
-                      placeholder="https://ejemplo.com/imagen.jpg"
-                      disabled={isSubmitting}
-                    />
+                    <FormLabel>Imagen del Producto</FormLabel>
+                    <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+                      <Button
+                        component="label"
+                        variant="outlined"
+                        startDecorator={<Upload />}
+                        disabled={isSubmitting || isUploading}
+                      >
+                        {selectedImage ? 'Cambiar Imagen' : 'Seleccionar Imagen'}
+                        <input
+                          type="file"
+                          hidden
+                          accept="image/*"
+                          onChange={handleImageSelect}
+                        />
+                      </Button>
+                      {(selectedImage || formData.imagen) && (
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                          <Typography level="body-sm" sx={{ color: 'text.secondary' }}>
+                            {selectedImage ? selectedImage.name : 'Imagen actual'}
+                          </Typography>
+                          <Button
+                            variant="plain"
+                            color="danger"
+                            onClick={handleRemoveImage}
+                            disabled={isSubmitting || isUploading}
+                          >
+                            <X />
+                          </Button>
+                        </Box>
+                      )}
+                    </Box>
                   </FormControl>
                 </Stack>
               </CardContent>

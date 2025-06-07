@@ -22,6 +22,7 @@ import Menu from '@mui/joy/Menu';
 import MenuButton from '@mui/joy/MenuButton';
 import MenuItem from '@mui/joy/MenuItem';
 import Dropdown from '@mui/joy/Dropdown';
+import { Alert } from '@mui/joy';
 
 import FilterAltIcon from '@mui/icons-material/FilterAlt';
 import SearchIcon from '@mui/icons-material/Search';
@@ -32,10 +33,28 @@ import WarningRoundedIcon from '@mui/icons-material/WarningRounded';
 import MoreHorizRoundedIcon from '@mui/icons-material/MoreHorizRounded';
 import { PlusIcon } from 'lucide-react';
 
-import {  useProductos, useUpdateProducto } from '../../../services/useProductos';
+import {  useProductos, useUpdateProducto, useDeleteProducto } from '../../../services/useProductos';
 import { useCategorias } from '@renderer/services/useCategorias';
 import { Producto } from '@renderer/models/Producto';
 import ProductoModal from './ProductoModal';
+
+function RowMenu({ onEdit, onDelete }: { onEdit: () => void; onDelete: () => void }): React.JSX.Element {
+  return (
+    <Dropdown>
+      <MenuButton
+        slots={{ root: IconButton }}
+        slotProps={{ root: { variant: 'plain', color: 'neutral', size: 'sm' } }}
+      >
+        <MoreHorizRoundedIcon />
+      </MenuButton>
+      <Menu size="sm" sx={{ minWidth: 140 }}>
+        <MenuItem onClick={onEdit}>Editar</MenuItem>
+        <Divider />
+        <MenuItem color="danger" onClick={onDelete}>Eliminar</MenuItem>
+      </Menu>
+    </Dropdown>
+  );
+}
 
 function descendingComparator<T>(a: T, b: T, orderBy: keyof T): number {
   const aValue = a[orderBy];
@@ -62,24 +81,6 @@ function getComparator<T>(order: Order, orderBy: keyof T): (a: T, b: T) => numbe
     : (a, b) => -descendingComparator(a, b, orderBy);
 }
 
-function RowMenu({ onEdit, onDelete }: { onEdit: () => void; onDelete: () => void }): React.JSX.Element {
-  return (
-    <Dropdown>
-      <MenuButton
-        slots={{ root: IconButton }}
-        slotProps={{ root: { variant: 'plain', color: 'neutral', size: 'sm' } }}
-      >
-        <MoreHorizRoundedIcon />
-      </MenuButton>
-      <Menu size="sm" sx={{ minWidth: 140 }}>
-        <MenuItem onClick={onEdit}>Editar</MenuItem>
-        <Divider />
-        <MenuItem color="danger" onClick={onDelete}>Eliminar</MenuItem>
-      </Menu>
-    </Dropdown>
-  );
-}
-
 export default function ProductosTable(): React.JSX.Element {
   const [order, setOrder] = React.useState<Order>('desc');
   const [open, setOpen] = React.useState(false);
@@ -89,12 +90,16 @@ export default function ProductosTable(): React.JSX.Element {
   const [isCreateModalOpen, setIsCreateModalOpen] = React.useState<boolean>(false);
   const [isEditingModalOpen, setIsEditingModalOpen] = React.useState<boolean>(false);
   const [selectedProducto, setSelectedProducto] = React.useState<Producto | null>(null);
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = React.useState(false);
+  const [productoToDelete, setProductoToDelete] = React.useState<Producto | null>(null);
+  const [alert, setAlert] = React.useState<{ type: 'success' | 'danger'; message: string } | null>(null);
 
   // ✅ USO CORRECTO: Patrón reactivo con filtros como parámetros
   const { 
     productos, 
     error, 
-    loading 
+    loading,
+    refetch 
   } = useProductos({
     nombre: searchTerm || undefined,
     categoria: categoryFilter !== 'all' ? Number(categoryFilter) : undefined,
@@ -103,6 +108,21 @@ export default function ProductosTable(): React.JSX.Element {
 
   const { categorias } = useCategorias();
   const updateProductoMutation = useUpdateProducto();
+  const deleteProductoMutation = useDeleteProducto();
+
+  // Forzar refetch cuando se cierra el modal de edición
+  React.useEffect(() => {
+    if (!isEditingModalOpen) {
+      refetch();
+    }
+  }, [isEditingModalOpen, refetch]);
+
+  // Efecto para refrescar la lista cuando se elimina un producto
+  React.useEffect(() => {
+    if (deleteProductoMutation.isSuccess) {
+      refetch();
+    }
+  }, [deleteProductoMutation.isSuccess, refetch]);
 
   // Función para obtener el estado del stock
   const getStockStatus = (cantidadStock: number | null, tieneStock: boolean | null): string => {
@@ -110,8 +130,6 @@ export default function ProductosTable(): React.JSX.Element {
     if (cantidadStock && cantidadStock <= 5) return 'poco-stock';
     return 'con-stock';
   };
-
-
 
   // ✅ Filtrar productos localmente (solo el filtro de stock que no viene del servidor)
   const filteredProductos = React.useMemo(() => {
@@ -137,15 +155,14 @@ export default function ProductosTable(): React.JSX.Element {
     setIsEditingModalOpen(true);
   };
 
-  const handleDelete = async (producto: Producto): Promise<void> => {
-    console.log('Eliminar producto:', producto);
+  const handleDelete = async (id: number) => {
     try {
-      await updateProductoMutation.mutateAsync({
-        id: producto.id,
-        producto: { estado: 0 }
-      });
+      await deleteProductoMutation.mutateAsync(id);
+      setAlert({ type: 'success', message: 'Producto eliminado correctamente' });
+      // La actualización de la lista se maneja automáticamente en el hook useDeleteProducto
     } catch (error) {
       console.error('Error al eliminar producto:', error);
+      setAlert({ type: 'danger', message: 'Error al eliminar el producto' });
     }
   };
 
@@ -155,10 +172,24 @@ export default function ProductosTable(): React.JSX.Element {
   };
 
   const handleUpdateSuccess = (): void => {
-    
     setIsEditingModalOpen(false);
     setSelectedProducto(null);
   };
+
+  // Efecto para limpiar la alerta después de 3 segundos
+  React.useEffect(() => {
+    let timer: NodeJS.Timeout;
+    if (alert) {
+      timer = setTimeout(() => {
+        setAlert(null);
+      }, 3000);
+    }
+    return () => {
+      if (timer) {
+        clearTimeout(timer);
+      }
+    };
+  }, [alert]);
 
   const renderFilters = (): React.JSX.Element => (
     <React.Fragment>
@@ -290,6 +321,15 @@ export default function ProductosTable(): React.JSX.Element {
           minHeight: 0,
         }}
       >
+        {alert && (
+          <Alert
+            color={alert.type}
+            variant="soft"
+            sx={{ mb: 2 }}
+          >
+            {alert.message}
+          </Alert>
+        )}
         <Table
           aria-labelledby="tableTitle"
           stickyHeader
@@ -391,7 +431,10 @@ export default function ProductosTable(): React.JSX.Element {
                     <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
                       <RowMenu
                         onEdit={() => handleEdit(producto)}
-                        onDelete={() => handleDelete(producto)}
+                        onDelete={() => {
+                          setProductoToDelete(producto);
+                          setIsDeleteModalOpen(true);
+                        }}
                       />
                     </Box>
                   </td>
@@ -428,6 +471,44 @@ export default function ProductosTable(): React.JSX.Element {
         loading={updateProductoMutation.isPending}
         error={updateProductoMutation.error?.message}
       />
+
+      <Modal
+        open={isDeleteModalOpen}
+        onClose={() => setIsDeleteModalOpen(false)}
+        aria-labelledby="delete-modal"
+        aria-describedby="delete-modal-description"
+      >
+        <ModalDialog>
+          <ModalClose />
+          <Typography id="delete-modal" level="h2">
+            Eliminar Producto
+          </Typography>
+          <Typography id="delete-modal-description" sx={{ mt: 2 }}>
+            ¿Estás seguro de que quieres eliminar este producto?
+          </Typography>
+          <Box sx={{ mt: 2, display: 'flex', gap: 2 }}>
+            <Button
+              variant="outlined"
+              color="neutral"
+              onClick={() => setIsDeleteModalOpen(false)}
+            >
+              Cancelar
+            </Button>
+            <Button
+              variant="outlined"
+              color="danger"
+              onClick={() => {
+                if (productoToDelete) {
+                  handleDelete(productoToDelete.id);
+                }
+                setIsDeleteModalOpen(false);
+              }}
+            >
+              Eliminar
+            </Button>
+          </Box>
+        </ModalDialog>
+      </Modal>
     </React.Fragment>
   );
 }

@@ -45,59 +45,104 @@ export const ProductosRepository = {
     },
 
     createProducto: async (producto: ProductoDTO): Promise<Product> => {
-        const { data, error } = await supabase
-            .from('productos')
-            .insert([producto])
-            .select()
-            .single();
+        // Validaciones básicas
+        if (!producto.nombre?.trim()) {
+            throw new Error('El nombre del producto es requerido');
+        }
 
-        if (error) {
+        if (typeof producto.precio === 'number' && producto.precio < 0) {
+            throw new Error('El precio no puede ser negativo');
+        }
+
+        if (typeof producto.cantidad_stock === 'number' && producto.cantidad_stock < 0) {
+            throw new Error('La cantidad en stock no puede ser negativa');
+        }
+
+        if (!producto.categoria_id) {
+            throw new Error('La categoría es requerida');
+        }
+
+        try {
+            const { data, error } = await supabase
+                .from('productos')
+                .insert([{
+                    ...producto,
+                    estado: 1,
+                    cantidad_stock: producto.cantidad_stock ?? 0,
+                    precio: producto.precio ?? 0
+                }])
+                .select()
+                .single();
+
+            if (error) {
+                console.error('Error al crear producto:', error);
+                throw new Error(error.message || 'Error al crear el producto');
+            }
+
+            if (!data) {
+                throw new Error('No se pudo crear el producto');
+            }
+
+            return data;
+        } catch (error) {
+            console.error('Error en createProducto:', error);
             throw error;
         }
-
-        if (!data) {
-            throw new Error('No se pudo crear el producto');
-        }
-
-        return data;
     },
 
     updateProducto: async (id: number, producto: Partial<ProductoDTO>): Promise<Product> => {
+        // Clonamos y eliminamos campos problemáticos
+        const productoLimpio = { ...producto };
+        delete productoLimpio.id;
+        delete productoLimpio.categoria; // Si no existe en tu tabla
+
+        console.log("producto limpio a enviar", productoLimpio)
+
         const { data, error } = await supabase
             .from('productos')
-            .update(producto)
+            .update(productoLimpio)
             .eq('id', id)
-            .select()
-            .single();
+            .select('*')
 
-        if (error) {
-            throw error;
-        }
+        if (error) throw error;
+        if (!data) throw new Error('No se pudo actualizar el producto');
 
-        if (!data) {
-            throw new Error('No se pudo actualizar el producto');
-        }
-
-        return data;
+        return data[0];
     },
 
-    deleteProducto: async (id: number): Promise<boolean> => {
-        const { data, error } = await supabase
-            .from('productos')
-            .delete()
-            .eq('id', id)
-            .select()
-            .single();
 
-        if (error) {
+    deleteProducto: async (id: number): Promise<boolean> => {
+        if (!id) {
+            throw new Error('ID de producto requerido');
+        }
+
+        try {
+            // Primero verificamos si el producto existe
+            const { error: checkError } = await supabase
+                .from('productos')
+                .select('imagen')
+                .eq('id', id)
+                .single();
+
+            if (checkError) {
+                throw new Error('Error al verificar el producto');
+            }
+
+            // Realizamos el soft delete actualizando el estado a 0
+            const { error } = await supabase
+                .from('productos')
+                .update({ estado: 0 })
+                .eq('id', id);
+
+            if (error) {
+                throw new Error(error.message || 'Error al eliminar el producto');
+            }
+
+            return true;
+        } catch (error) {
+            console.error('Error en deleteProducto:', error);
             throw error;
         }
-
-        if (!data) {
-            throw new Error('No se pudo actualizar el producto');
-        }
-
-        return true;
     },
 
     deleteImage: async (fileName: string): Promise<void> => {

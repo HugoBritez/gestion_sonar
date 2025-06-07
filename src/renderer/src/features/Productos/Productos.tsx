@@ -13,15 +13,19 @@ import ChevronRightRoundedIcon from '@mui/icons-material/ChevronRightRounded';
 import Sidebar from '../../shared/UI/Sidebar';
 import ProductosTable from './components/ProductosTable';
 import ProductosList from './components/ProductosList';
-import Header from './components/Header';
+import Header from './components/Header'; 
 
-export default function ProductosDashboard():React.JSX.Element {
+interface ProductosDashboardProps {
+  onLogout: ()=> void;
+}
+
+export default function ProductosDashboard({onLogout}: ProductosDashboardProps):React.JSX.Element {
   return (
     <CssVarsProvider disableTransitionOnChange>
       <CssBaseline />
       <Box sx={{ display: 'flex', minHeight: '100dvh' }}>
         <Header />
-        <Sidebar />
+        <Sidebar onLogout={()=>onLogout()} />
         <Box
           component="main"
           className="MainContent"

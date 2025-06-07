@@ -16,6 +16,11 @@ export const signIn = async (Email: string, Password: string): Promise<void> => 
     // Guardar datos de autenticación en localStorage
     if(data.session) {
         localStorage.setItem('authData', JSON.stringify(data));
+        // Obtener y guardar el usuario actual inmediatamente
+        const currentUser = await getCurrentUser();
+        if (currentUser) {
+            localStorage.setItem('currentUser', JSON.stringify(currentUser));
+        }
     }
 }
 
@@ -31,23 +36,30 @@ export const signOut = async (): Promise<void> => {
 }
 
 export const getCurrentUser = async (): Promise<User | null> => {
-    const { data: { user }, error } = await supabase.auth.getUser();
-    
-    if(error){
-        throw new Error(error.message)
+    try {
+        const { data: { user }, error } = await supabase.auth.getUser();
+        
+        if(error){
+            console.error('Error obteniendo usuario:', error);
+            return null;
+        }
+        
+        return user;
+    } catch (error) {
+        console.error('Error en getCurrentUser:', error);
+        return null;
     }
-    
-    return user;
 }
 
 export const isAuthenticated = (): boolean => {
-    const authData = localStorage.getItem('authData');
-    if(!authData) return false;
-    
     try {
+        const authData = localStorage.getItem('authData');
+        if(!authData) return false;
+        
         const parsed = JSON.parse(authData);
-        return parsed.session && parsed.session.access_token;
-    } catch {
+        return !!(parsed.session && parsed.session.access_token);
+    } catch (error) {
+        console.error('Error verificando autenticación:', error);
         return false;
     }
 }

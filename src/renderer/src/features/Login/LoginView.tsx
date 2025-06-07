@@ -17,7 +17,9 @@ import Stack from '@mui/joy/Stack'
 import Alert from '@mui/joy/Alert'
 import DarkModeRoundedIcon from '@mui/icons-material/DarkModeRounded'
 import LightModeRoundedIcon from '@mui/icons-material/LightModeRounded'
-import  SonarLogo from '../../../../../resources/logosonnarconfondodark.png'
+import VisibilityIcon from '@mui/icons-material/Visibility'
+import VisibilityOffIcon from '@mui/icons-material/VisibilityOff'
+import SonarLogo from '../../../../../resources/logosonnarconfondodark.png'
 import LogoBg from '../../assets/login_bg.jpg'
 import { signIn } from '@renderer/repos/AuthRepo'
 import { AuthRequest } from '@renderer/models/Auth'
@@ -64,6 +66,7 @@ interface LoginViewProps {
 export default function LoginView({ onLoginSuccess }: LoginViewProps): React.JSX.Element {
   const [isLoading, setIsLoading] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
+  const [showPassword, setShowPassword] = React.useState(false)
 
   const handleLogin = async (authData: AuthRequest): Promise<void> => {
     setIsLoading(true)
@@ -192,7 +195,20 @@ export default function LoginView({ onLoginSuccess }: LoginViewProps): React.JSX
                 </FormControl>
                 <FormControl required>
                   <FormLabel>Contraseña</FormLabel>
-                  <Input type="password" name="password" disabled={isLoading} />
+                  <Input
+                    type={showPassword ? "text" : "password"}
+                    name="password"
+                    disabled={isLoading}
+                    endDecorator={
+                      <IconButton
+                        onClick={() => setShowPassword(!showPassword)}
+                        variant="plain"
+                        color="neutral"
+                      >
+                        {showPassword ? <VisibilityOffIcon /> : <VisibilityIcon />}
+                      </IconButton>
+                    }
+                  />
                 </FormControl>
                 <Stack sx={{ gap: 4, mt: 2 }}>
                     <Box

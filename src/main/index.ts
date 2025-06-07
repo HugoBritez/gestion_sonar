@@ -14,13 +14,38 @@ function createWindow(): void {
     height: 800,
     show: false,
     autoHideMenuBar: true,
-    ...(process.platform === 'linux' ? { icon } : {}),
+    icon: join(__dirname, '../../resources/logosonnarconfondodark.png'),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      sandbox: false,
+      sandbox: true,
       nodeIntegration: false,
-      contextIsolation: true
+      contextIsolation: true,
+      webSecurity: true,
+      allowRunningInsecureContent: false
     }
+  })
+
+  // Habilitar DevTools en producción
+  mainWindow.webContents.openDevTools()
+
+  // Configurar CSP para todas las sesiones
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Content-Security-Policy': [
+          "default-src 'self'",
+          "connect-src 'self' https://*.supabase.co wss://*.supabase.co",
+          "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+          "style-src 'self' 'unsafe-inline'",
+          "img-src 'self' data: blob: https://*.supabase.co https://*.unsplash.com https://images.unsplash.com",
+          "font-src 'self' data:",
+          "media-src 'self' blob:",
+          "frame-src 'self'",
+          "worker-src 'self' blob:"
+        ].join('; ')
+      }
+    })
   })
 
   mainWindow.on('ready-to-show', () => {
@@ -46,20 +71,7 @@ function createWindow(): void {
 // Some APIs can only be used after this event occurs.
 app.whenReady().then(() => {
   // Set app user model id for windows
-  electronApp.setAppUserModelId('com.electron')
-
-  // 🔒 Permitir conexiones a Supabase (CSP)
-  const filter = { urls: ['*://*/*'] }
-  session.defaultSession.webRequest.onHeadersReceived(filter, (details, callback) => {
-    callback({
-      responseHeaders: {
-        ...details.responseHeaders,
-        'Content-Security-Policy': [
-  "default-src 'self'; connect-src *; script-src 'self' 'unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src * data: blob:;"
-]
-      }
-    })
-  })
+  electronApp.setAppUserModelId('com.sonar.app')
 
   // Default open or close DevTools by F12 in development
   // and ignore CommandOrControl + R in production.

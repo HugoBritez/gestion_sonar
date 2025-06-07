@@ -1,7 +1,7 @@
 /* eslint-disable prettier/prettier */
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useState } from 'react';
-import { ProductosRepository } from '../repos/ProductosRepo';
+import { ProductosRepository, Product } from '../repos/ProductosRepo';
 import { GetProductsParams } from '@renderer/models/Productos/DTOs/GetProductosParams';
 import { ProductoDTO } from '../repos/ProductosRepo';
 
@@ -29,10 +29,13 @@ export const useProductos = (filters: ProductosFilters = {}) => {
     } = useQuery({
         queryKey: productosKeys.list(filters),
         queryFn: () => ProductosRepository.getProductos(filters),
-        staleTime: 5 * 60 * 1000, // 5 minutos
-        gcTime: 10 * 60 * 1000, // 10 minutos
+        staleTime: 0, // Los datos se consideran obsoletos inmediatamente
+        gcTime: 5 * 60 * 1000, // 5 minutos
         retry: 2,
-        // La query se ejecuta automáticamente cuando cambian los filtros
+        refetchOnWindowFocus: true,
+        refetchOnMount: true,
+        refetchOnReconnect: true,
+        refetchInterval: 5000 // Refrescar cada 5 segundos
     });
 
     return {
@@ -78,10 +81,13 @@ export const useCreateProducto = () => {
     return useMutation({
         mutationFn: (producto: ProductoDTO) => ProductosRepository.createProducto(producto),
         onSuccess: (newProduct) => {
-            // Invalidar todas las listas de productos
-            queryClient.invalidateQueries({ queryKey: productosKeys.lists() });
+            // Invalidar todas las consultas relacionadas con productos
+            queryClient.invalidateQueries({ queryKey: productosKeys.all });
             
-            // Agregar el nuevo producto al caché
+            // Forzar un refetch de todas las listas
+            queryClient.refetchQueries({ queryKey: productosKeys.lists() });
+            
+            // Actualizar el caché con el nuevo producto
             queryClient.setQueryData(
                 productosKeys.detail(newProduct.id),
                 newProduct
@@ -101,14 +107,17 @@ export const useUpdateProducto = () => {
         mutationFn: ({ id, producto }: { id: number; producto: Partial<ProductoDTO> }) =>
             ProductosRepository.updateProducto(id, producto),
         onSuccess: (updatedProduct, { id }) => {
+            // Invalidar todas las consultas relacionadas con productos
+            queryClient.invalidateQueries({ queryKey: productosKeys.all });
+            
             // Actualizar el producto específico en caché
             queryClient.setQueryData(
                 productosKeys.detail(id),
                 updatedProduct
             );
             
-            // Invalidar todas las listas para reflejar los cambios
-            queryClient.invalidateQueries({ queryKey: productosKeys.lists() });
+            // Forzar un refetch de todas las listas
+            queryClient.refetchQueries({ queryKey: productosKeys.lists() });
         },
         onError: (error) => {
             console.error('Error al actualizar producto:', error);
@@ -122,12 +131,27 @@ export const useDeleteProducto = () => {
 
     return useMutation({
         mutationFn: (id: number) => ProductosRepository.deleteProducto(id),
-        onSuccess: (_, id) => {
-            // Remover de caché
+        onSuccess: async (_, id) => {
+            // Invalidar todas las consultas relacionadas con productos
+            await queryClient.invalidateQueries({ queryKey: productosKeys.all });
+            
+            // Forzar un refetch de todas las listas
+            await queryClient.refetchQueries({ queryKey: productosKeys.lists() });
+            
+            // Remover el producto específico del caché
             queryClient.removeQueries({ queryKey: productosKeys.detail(id) });
             
-            // Invalidar listas
-            queryClient.invalidateQueries({ queryKey: productosKeys.lists() });
+            // Actualizar optimistamente las listas
+            queryClient.setQueriesData(
+                { queryKey: productosKeys.lists() },
+                (old: { data: Product[] } | undefined) => {
+                    if (!old) return old;
+                    return {
+                        ...old,
+                        data: old.data.filter((producto) => producto.id !== id)
+                    };
+                }
+            );
         },
         onError: (error) => {
             console.error('Error al eliminar producto:', error);
